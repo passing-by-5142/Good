@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import datetime as dt
+import csv
 import json
 import os
 import sys
@@ -10,16 +11,16 @@ import urllib.request
 
 
 TICKERS = [
-    ("000270", "기아"),
-    ("005930", "삼성전자"),
-    ("005940", "NH투자증권"),
-    ("035420", "NAVER"),
-    ("035720", "카카오"),
-    ("086790", "하나금융지주"),
-    ("091160", "KODEX 반도체"),
-    ("360200", "ACE 미국S&P500"),
-    ("367380", "ACE 미국나스닥100"),
-    ("402970", "ACE 미국배당다우존스"),
+    {"ticker": "000270", "name": "기아", "quantity": ""},
+    {"ticker": "005930", "name": "삼성전자", "quantity": ""},
+    {"ticker": "005940", "name": "NH투자증권", "quantity": ""},
+    {"ticker": "035420", "name": "NAVER", "quantity": ""},
+    {"ticker": "035720", "name": "카카오", "quantity": ""},
+    {"ticker": "086790", "name": "하나금융지주", "quantity": ""},
+    {"ticker": "091160", "name": "KODEX 반도체", "quantity": ""},
+    {"ticker": "360200", "name": "ACE 미국S&P500", "quantity": ""},
+    {"ticker": "367380", "name": "ACE 미국나스닥100", "quantity": ""},
+    {"ticker": "402970", "name": "ACE 미국배당다우존스", "quantity": ""},
 ]
 
 TOKEN_CACHE_FILE = ".kis_token.json"
@@ -50,6 +51,42 @@ def request_json(method, url, headers=None, body=None, timeout=15):
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {e.code} {url}: {detail}") from e
+
+
+def request_text(url, timeout=15):
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return res.read().decode("utf-8-sig")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code} {url}: {detail}") from e
+
+
+def get_tickers():
+    tickers_csv_url = os.environ.get("TICKERS_CSV_URL")
+    if not tickers_csv_url:
+        return TICKERS
+
+    try:
+        text = request_text(tickers_csv_url)
+        rows = csv.DictReader(text.splitlines())
+        tickers = []
+        for row in rows:
+            enabled = str(row.get("enabled", "TRUE")).strip().lower()
+            if enabled in ("false", "n", "no", "0", "미사용", "제외"):
+                continue
+            ticker = str(row.get("ticker", "")).strip().zfill(6)
+            name = str(row.get("name", "")).strip()
+            quantity = to_number(row.get("quantity", row.get("qty", "")))
+            if ticker and name:
+                tickers.append({"ticker": ticker, "name": name, "quantity": quantity})
+        if tickers:
+            return tickers
+        print("TICKERS_CSV_URL did not contain valid rows. Falling back to built-in TICKERS.", file=sys.stderr)
+    except Exception as exc:
+        print(f"Failed to load TICKERS_CSV_URL. Falling back to built-in TICKERS: {exc}", file=sys.stderr)
+    return TICKERS
 
 
 def get_access_token(base_url, app_key, app_secret):
@@ -98,7 +135,10 @@ def save_cached_token(token, expires_in):
         json.dump(payload, f)
 
 
-def get_price(base_url, app_key, app_secret, access_token, ticker, name):
+def get_price(base_url, app_key, app_secret, access_token, item):
+    ticker = item["ticker"]
+    name = item["name"]
+    quantity = item.get("quantity", "")
     query = urllib.parse.urlencode({
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": ticker,
@@ -115,12 +155,19 @@ def get_price(base_url, app_key, app_secret, access_token, ticker, name):
     output = payload.get("output") or {}
     if payload.get("rt_cd") not in (None, "0"):
         raise RuntimeError(f"{ticker} KIS error: {payload}")
+    price = to_number(output.get("stck_prpr"))
+    market_value = ""
+    if isinstance(price, (int, float)) and isinstance(quantity, (int, float)):
+        market_value = price * quantity
+
     return {
         "ticker": ticker,
         "name": name,
-        "price": to_number(output.get("stck_prpr")),
+        "quantity": quantity,
+        "price": price,
         "change": to_number(output.get("prdy_vrss")),
         "change_pct": to_number(output.get("prdy_ctrt")),
+        "market_value": market_value,
         "volume": to_number(output.get("acml_vol")),
         "open": to_number(output.get("stck_oprc")),
         "high": to_number(output.get("stck_hgpr")),
@@ -128,10 +175,12 @@ def get_price(base_url, app_key, app_secret, access_token, ticker, name):
     }
 
 
-def get_price_with_retry(base_url, app_key, app_secret, access_token, ticker, name, retries=3):
+def get_price_with_retry(base_url, app_key, app_secret, access_token, item, retries=3):
+    ticker = item["ticker"]
+    name = item["name"]
     for attempt in range(retries):
         try:
-            return get_price(base_url, app_key, app_secret, access_token, ticker, name)
+            return get_price(base_url, app_key, app_secret, access_token, item)
         except RuntimeError as exc:
             if "EGW00201" not in str(exc) or attempt == retries - 1:
                 raise
@@ -165,6 +214,33 @@ def post_to_google(url, token, captured_at, items):
     return request_json("POST", url, body=body)
 
 
+def save_local_snapshot(captured_at, items, path="latest_snapshot.csv"):
+    fieldnames = [
+        "captured_at",
+        "source",
+        "ticker",
+        "name",
+        "quantity",
+        "price",
+        "change",
+        "change_pct",
+        "market_value",
+        "volume",
+        "open",
+        "high",
+        "low",
+    ]
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in items:
+            writer.writerow({
+                "captured_at": captured_at,
+                "source": "KIS_OPEN_API",
+                **item,
+            })
+
+
 def main():
     load_dotenv()
     app_key = os.environ.get("KIS_APP_KEY")
@@ -190,9 +266,14 @@ def main():
     access_token = get_access_token(base_url, app_key, app_secret)
     items = []
 
-    for ticker, name in TICKERS:
+    tickers = get_tickers()
+    print(f"Loaded {len(tickers)} tickers.")
+
+    for ticker_item in tickers:
+        ticker = ticker_item["ticker"]
+        name = ticker_item["name"]
         try:
-            item = get_price_with_retry(base_url, app_key, app_secret, access_token, ticker, name)
+            item = get_price_with_retry(base_url, app_key, app_secret, access_token, ticker_item)
             items.append(item)
             print(f"{ticker} {name}: {item['price']} ({item['change_pct']}%)")
         except Exception as exc:
@@ -202,6 +283,9 @@ def main():
     if not items:
         print("No prices collected.", file=sys.stderr)
         return 1
+
+    save_local_snapshot(captured_at, items)
+    print("Saved local snapshot: latest_snapshot.csv")
 
     result = post_to_google(google_url, snapshot_token, captured_at, items)
     print(json.dumps(result, ensure_ascii=False, indent=2))
