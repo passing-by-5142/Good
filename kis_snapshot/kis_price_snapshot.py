@@ -79,8 +79,23 @@ def get_tickers():
             ticker = str(row.get("ticker", "")).strip().zfill(6)
             name = str(row.get("name", "")).strip()
             quantity = to_number(row.get("quantity", row.get("qty", "")))
+            cost_basis = to_number(row.get("cost_basis", row.get("principal", row.get("cost", ""))))
+            avg_buy_price = to_number(row.get("avg_buy_price", row.get("avg_price", "")))
+            if (
+                not isinstance(avg_buy_price, (int, float))
+                and isinstance(cost_basis, (int, float))
+                and isinstance(quantity, (int, float))
+                and quantity != 0
+            ):
+                avg_buy_price = cost_basis / quantity
             if ticker and name:
-                tickers.append({"ticker": ticker, "name": name, "quantity": quantity})
+                tickers.append({
+                    "ticker": ticker,
+                    "name": name,
+                    "quantity": quantity,
+                    "cost_basis": cost_basis,
+                    "avg_buy_price": avg_buy_price,
+                })
         if tickers:
             return tickers
         print("TICKERS_CSV_URL did not contain valid rows. Falling back to built-in TICKERS.", file=sys.stderr)
@@ -139,6 +154,8 @@ def get_price(base_url, app_key, app_secret, access_token, item):
     ticker = item["ticker"]
     name = item["name"]
     quantity = item.get("quantity", "")
+    cost_basis = item.get("cost_basis", "")
+    avg_buy_price = item.get("avg_buy_price", "")
     query = urllib.parse.urlencode({
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": ticker,
@@ -159,15 +176,25 @@ def get_price(base_url, app_key, app_secret, access_token, item):
     market_value = ""
     if isinstance(price, (int, float)) and isinstance(quantity, (int, float)):
         market_value = price * quantity
+    unrealized_pnl = ""
+    unrealized_pnl_pct = ""
+    if isinstance(market_value, (int, float)) and isinstance(cost_basis, (int, float)):
+        unrealized_pnl = market_value - cost_basis
+        if cost_basis != 0:
+            unrealized_pnl_pct = unrealized_pnl / cost_basis * 100
 
     return {
         "ticker": ticker,
         "name": name,
         "quantity": quantity,
+        "cost_basis": cost_basis,
+        "avg_buy_price": avg_buy_price,
         "price": price,
         "change": to_number(output.get("prdy_vrss")),
         "change_pct": to_number(output.get("prdy_ctrt")),
         "market_value": market_value,
+        "unrealized_pnl": unrealized_pnl,
+        "unrealized_pnl_pct": unrealized_pnl_pct,
         "volume": to_number(output.get("acml_vol")),
         "open": to_number(output.get("stck_oprc")),
         "high": to_number(output.get("stck_hgpr")),
@@ -221,10 +248,14 @@ def save_local_snapshot(captured_at, items, path="latest_snapshot.csv"):
         "ticker",
         "name",
         "quantity",
+        "cost_basis",
+        "avg_buy_price",
         "price",
         "change",
         "change_pct",
         "market_value",
+        "unrealized_pnl",
+        "unrealized_pnl_pct",
         "volume",
         "open",
         "high",
