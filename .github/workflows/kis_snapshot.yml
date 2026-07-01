@@ -41,7 +41,7 @@ jobs:
           SNAPSHOT_TOKEN: ${{ secrets.SNAPSHOT_TOKEN }}
           TICKERS_CSV_URL: ${{ secrets.TICKERS_CSV_URL }}
           GENERATE_REPORT: "true"
-          REPORT_PATH: kis_snapshot/latest_report.md
+          REPORT_PATH: latest_report.md
           REPORT_TYPE: intraday
         run: python kis_price_snapshot.py
 
@@ -49,6 +49,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add kis_snapshot/latest_snapshot.csv
+          git add kis_snapshot/latest_snapshot.csv kis_snapshot/latest_report.md
           git commit -m "Update latest KIS snapshot" || echo "No changes to commit"
           git push
