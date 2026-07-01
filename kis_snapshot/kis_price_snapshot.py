@@ -132,7 +132,7 @@ def get_tickers():
     return TICKERS
 
 
-def get_access_token(base_url, app_key, app_secret):
+def get_access_token(base_url, app_key, app_secret, retries=4, base_wait=5):
     cached = load_cached_token()
     if cached:
         return cached
@@ -143,7 +143,25 @@ def get_access_token(base_url, app_key, app_secret):
         "appkey": app_key,
         "appsecret": app_secret,
     }
-    payload = request_json("POST", url, body=body)
+
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            payload = request_json("POST", url, body=body, timeout=30)
+            break
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            wait_seconds = base_wait * (attempt + 1)
+            print(
+                f"Token request timed out/failed (attempt {attempt + 1}/{retries}): {exc}. "
+                f"Retrying in {wait_seconds}s",
+                file=sys.stderr,
+            )
+            if attempt < retries - 1:
+                time.sleep(wait_seconds)
+    else:
+        raise RuntimeError(f"Failed to reach KIS token endpoint after {retries} attempts: {last_exc}")
+
     token = payload.get("access_token")
     if not token:
         raise RuntimeError(f"access_token not found: {payload}")
