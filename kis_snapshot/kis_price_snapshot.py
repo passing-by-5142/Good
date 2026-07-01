@@ -9,23 +9,29 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from portfolio_report import make_report, write_report
+
 
 TICKERS = [
-    {"ticker": "000270", "name": "기아", "quantity": ""},
-    {"ticker": "005930", "name": "삼성전자", "quantity": ""},
-    {"ticker": "005940", "name": "NH투자증권", "quantity": ""},
-    {"ticker": "035420", "name": "NAVER", "quantity": ""},
-    {"ticker": "035720", "name": "카카오", "quantity": ""},
-    {"ticker": "086790", "name": "하나금융지주", "quantity": ""},
-    {"ticker": "091160", "name": "KODEX 반도체", "quantity": ""},
-    {"ticker": "360200", "name": "ACE 미국S&P500", "quantity": ""},
-    {"ticker": "367380", "name": "ACE 미국나스닥100", "quantity": ""},
-    {"ticker": "402970", "name": "ACE 미국배당다우존스", "quantity": ""},
+    {"ticker": "000270", "name": "기아", "quantity": 4, "cost_basis": 681200, "avg_buy_price": 170300},
+    {"ticker": "005930", "name": "삼성전자", "quantity": 7, "cost_basis": 2356500, "avg_buy_price": 336643},
+    {"ticker": "005940", "name": "NH투자증권", "quantity": 13, "cost_basis": 391950, "avg_buy_price": 30150},
+    {"ticker": "035420", "name": "NAVER", "quantity": 3, "cost_basis": 652500, "avg_buy_price": 217500},
+    {"ticker": "035720", "name": "카카오", "quantity": 11, "cost_basis": 444550, "avg_buy_price": 40414},
+    {"ticker": "086790", "name": "하나금융지주", "quantity": 5, "cost_basis": 571500, "avg_buy_price": 114300},
+    {"ticker": "091160", "name": "KODEX 반도체", "quantity": 8, "cost_basis": 1286700, "avg_buy_price": 160838},
+    {"ticker": "360200", "name": "ACE 미국S&P500", "quantity": 157, "cost_basis": 4526260, "avg_buy_price": 28830},
+    {"ticker": "360750", "name": "TIGER 미국S&P500", "quantity": 373, "cost_basis": 9012610, "avg_buy_price": 24162},
+    {"ticker": "379810", "name": "KODEX 미국나스닥100", "quantity": 415, "cost_basis": 10603835, "avg_buy_price": 25551},
+    {"ticker": "0023A0", "name": "SOL 미국양자컴퓨팅TOP10", "quantity": 107, "cost_basis": 3101406, "avg_buy_price": 28985},
+    {"ticker": "367380", "name": "ACE 미국나스닥100", "quantity": 56, "cost_basis": 1964910, "avg_buy_price": 35088},
+    {"ticker": "402970", "name": "ACE 미국배당다우존스", "quantity": 73, "cost_basis": 1157745, "avg_buy_price": 15860},
 ]
 
 TOKEN_CACHE_FILE = ".kis_token.json"
 KST = dt.timezone(dt.timedelta(hours=9), "KST")
 DEFAULT_SNAPSHOT_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest_snapshot.csv")
+DEFAULT_REPORT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest_report.md")
 
 
 def env_bool(name, default=False):
@@ -132,7 +138,7 @@ def get_tickers():
     return TICKERS
 
 
-def get_access_token(base_url, app_key, app_secret, retries=4, base_wait=5):
+def get_access_token(base_url, app_key, app_secret):
     cached = load_cached_token()
     if cached:
         return cached
@@ -143,25 +149,7 @@ def get_access_token(base_url, app_key, app_secret, retries=4, base_wait=5):
         "appkey": app_key,
         "appsecret": app_secret,
     }
-
-    last_exc = None
-    for attempt in range(retries):
-        try:
-            payload = request_json("POST", url, body=body, timeout=30)
-            break
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            last_exc = exc
-            wait_seconds = base_wait * (attempt + 1)
-            print(
-                f"Token request timed out/failed (attempt {attempt + 1}/{retries}): {exc}. "
-                f"Retrying in {wait_seconds}s",
-                file=sys.stderr,
-            )
-            if attempt < retries - 1:
-                time.sleep(wait_seconds)
-    else:
-        raise RuntimeError(f"Failed to reach KIS token endpoint after {retries} attempts: {last_exc}")
-
+    payload = request_json("POST", url, body=body)
     token = payload.get("access_token")
     if not token:
         raise RuntimeError(f"access_token not found: {payload}")
@@ -277,13 +265,15 @@ def to_number(value):
         return text
 
 
-def post_to_google(url, token, captured_at, items):
+def post_to_google(url, token, captured_at, items, report=None):
     body = {
         "token": token,
         "captured_at": captured_at,
         "source": "KIS_OPEN_API",
         "items": items,
     }
+    if report:
+        body["report"] = report
     return request_json("POST", url, body=body)
 
 
@@ -329,8 +319,11 @@ def main():
     google_url = os.environ.get("GOOGLE_APPS_SCRIPT_URL")
     snapshot_token = os.environ.get("SNAPSHOT_TOKEN")
     output_csv_path = os.environ.get("SNAPSHOT_CSV_PATH", DEFAULT_SNAPSHOT_CSV)
+    report_path = os.environ.get("REPORT_PATH", DEFAULT_REPORT_PATH)
+    report_type = os.environ.get("REPORT_TYPE", "intraday")
     force_run = env_bool("FORCE_RUN", False)
     require_google_sync = env_bool("REQUIRE_GOOGLE_SYNC", False)
+    generate_report = env_bool("GENERATE_REPORT", False)
 
     missing = [
         key for key, value in {
@@ -378,9 +371,18 @@ def main():
     save_local_snapshot(captured_at, items, output_csv_path)
     print(f"Saved local snapshot: {output_csv_path}")
 
+    report = None
+    if generate_report:
+        try:
+            report = make_report(captured_at, items, report_type=report_type)
+            write_report(report, report_path)
+            print(f"Saved portfolio report: {report_path}")
+        except Exception as exc:
+            print(f"Portfolio report generation failed: {exc}", file=sys.stderr)
+
     if google_url and snapshot_token:
         try:
-            result = post_to_google(google_url, snapshot_token, captured_at, items)
+            result = post_to_google(google_url, snapshot_token, captured_at, items, report=report)
             print("Posted snapshot to Google Sheets:")
             print(json.dumps(result, ensure_ascii=False, indent=2))
         except Exception as exc:
