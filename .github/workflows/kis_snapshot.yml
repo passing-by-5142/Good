@@ -40,7 +40,7 @@ jobs:
           GOOGLE_APPS_SCRIPT_URL: ${{ secrets.GOOGLE_APPS_SCRIPT_URL }}
           SNAPSHOT_TOKEN: ${{ secrets.SNAPSHOT_TOKEN }}
           TICKERS_CSV_URL: ${{ secrets.TICKERS_CSV_URL }}
-          GENERATE_REPORT: true
+          GENERATE_REPORT: "true"
           REPORT_PATH: kis_snapshot/latest_report.md
           REPORT_TYPE: intraday
         run: python kis_price_snapshot.py
