@@ -21,6 +21,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Get KST date
+        id: date
+        run: echo "value=$(TZ='Asia/Seoul' date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore KIS token cache
+        uses: actions/cache@v4
+        with:
+          path: kis_snapshot/.kis_token.json
+          key: kis-token-${{ steps.date.outputs.value }}
+
       - name: Run KIS snapshot
         working-directory: kis_snapshot
         env:
