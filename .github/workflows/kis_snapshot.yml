@@ -49,6 +49,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add kis_snapshot/latest_snapshot.csv kis_snapshot/latest_report.md
+          git add kis_snapshot/latest_snapshot.csv kis_snapshot/latest_report.md kis_snapshot/snapshots kis_snapshot/reports
           git commit -m "Update latest KIS snapshot" || echo "No changes to commit"
           git push
