@@ -32,6 +32,8 @@ TOKEN_CACHE_FILE = ".kis_token.json"
 KST = dt.timezone(dt.timedelta(hours=9), "KST")
 DEFAULT_SNAPSHOT_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest_snapshot.csv")
 DEFAULT_REPORT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "latest_report.md")
+DEFAULT_SNAPSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
+DEFAULT_REPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 
 
 def env_bool(name, default=False):
@@ -58,6 +60,21 @@ def is_market_open(now=None):
         return False
 
     return dt.time(9, 0) <= now.time() <= dt.time(15, 30)
+
+
+def report_slot(now):
+    """Return the scheduled report slot this snapshot is intended to feed."""
+    if now.hour < 12:
+        return "1000"
+    return "1400"
+
+
+def dated_output_paths(now):
+    date_key = now.strftime("%Y%m%d")
+    slot = report_slot(now)
+    snapshot_path = os.path.join(DEFAULT_SNAPSHOT_DIR, f"snapshot_{date_key}_{slot}.csv")
+    report_path = os.path.join(DEFAULT_REPORT_DIR, f"report_{date_key}_{slot}.md")
+    return snapshot_path, report_path
 
 
 def load_dotenv(path=".env"):
@@ -371,12 +388,18 @@ def main():
     save_local_snapshot(captured_at, items, output_csv_path)
     print(f"Saved local snapshot: {output_csv_path}")
 
+    dated_snapshot_path, dated_report_path = dated_output_paths(current)
+    save_local_snapshot(captured_at, items, dated_snapshot_path)
+    print(f"Saved dated snapshot: {dated_snapshot_path}")
+
     report = None
     if generate_report:
         try:
             report = make_report(captured_at, items, report_type=report_type)
             write_report(report, report_path)
             print(f"Saved portfolio report: {report_path}")
+            write_report(report, dated_report_path)
+            print(f"Saved dated portfolio report: {dated_report_path}")
         except Exception as exc:
             print(f"Portfolio report generation failed: {exc}", file=sys.stderr)
 
