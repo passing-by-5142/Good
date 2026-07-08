@@ -2,11 +2,37 @@ name: KIS Price Snapshot
 
 on:
   schedule:
+    # KST 09:00~14:50, every 10 minutes
     - cron: "*/10 0-5 * * 1-5"
+    # KST 15:00, 15:10, 15:20, 15:30
+    - cron: "0,10,20,30 6 * * 1-5"
+    # KST 10:05, 14:05 Telegram report
+    - cron: "5 1,5 * * 1-5"
   workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run even outside Korean regular market hours"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      send_telegram:
+        description: "Send Telegram report after snapshot"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: write
+
+concurrency:
+  group: kis-price-snapshot
+  cancel-in-progress: false
 
 jobs:
   snapshot:
@@ -40,12 +66,16 @@ jobs:
           GOOGLE_APPS_SCRIPT_URL: ${{ secrets.GOOGLE_APPS_SCRIPT_URL }}
           SNAPSHOT_TOKEN: ${{ secrets.SNAPSHOT_TOKEN }}
           TICKERS_CSV_URL: ${{ secrets.TICKERS_CSV_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GENERATE_REPORT: "true"
           REPORT_PATH: latest_report.md
           REPORT_TYPE: intraday
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_run == 'true' }}
+          SEND_TELEGRAM_REPORT: ${{ (github.event_name == 'schedule' && github.event.schedule == '5 1,5 * * 1-5') || (github.event_name == 'workflow_dispatch' && github.event.inputs.send_telegram == 'true') }}
         run: python kis_price_snapshot.py
 
-      - name: Commit latest snapshot CSV
+      - name: Commit latest snapshot and report
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
